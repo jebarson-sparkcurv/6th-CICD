@@ -50,7 +50,7 @@ jobs:
 
 
   deploy:
-    name: Connect to EC2
+    name: Prepare EC2
     needs: build
     runs-on: ubuntu-latest
 
@@ -66,8 +66,20 @@ jobs:
 
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Test EC2 connection
+      - name: Prepare EC2 server
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "echo 'Successfully connected to EC2'"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+
+            sudo apt-get update
+
+            sudo apt-get install -y nginx
+
+            sudo apt-get install -y python3
+            sudo apt-get install -y python3-pip
+            sudo apt-get install -y python3-venv
+            sudo apt-get install -y curl
+
+            echo "EC2 preparation completed"
+
+          EOF
