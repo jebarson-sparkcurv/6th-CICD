@@ -33,6 +33,7 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: yarn build
+
       - name: Upload frontend build
         uses: actions/upload-artifact@v4
         with:
@@ -55,7 +56,7 @@ jobs:
 
 
   deploy:
-    name: Prepare EC2
+    name: Deploy Application
     needs: build
     runs-on: ubuntu-latest
 
@@ -106,6 +107,7 @@ jobs:
           scp -i ~/.ssh/github-actions -r \
             frontend/dist/* \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/cicd-app/"
+
       - name: Configure NGINX
         run: |
           ssh -i ~/.ssh/github-actions \
@@ -131,11 +133,11 @@ jobs:
             sudo systemctl restart nginx
 
             echo "NGINX configured successfully"
+
+          EOF
+
       - name: Check frontend health
         run: |
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "curl -f http://localhost:4000"
-
-          
-          
