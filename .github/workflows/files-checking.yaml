@@ -326,7 +326,6 @@ jobs:
 
       - name: Enable NGINX
         run: |
-
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "sudo mv /tmp/cicd-app /etc/nginx/sites-available/cicd-app && \
@@ -337,7 +336,6 @@ jobs:
              sudo systemctl restart nginx && \
              echo 'NGINX configuration installed successfully' && \
              sudo ls -l /etc/nginx/sites-enabled/cicd-app"
-
 
       # ========================================================
       # COPY SYSTEMD SERVICE TO EC2
