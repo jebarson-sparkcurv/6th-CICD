@@ -1,4 +1,4 @@
-name: Developer CI
+name: Application Deployment
 
 on:
   push:
@@ -6,22 +6,43 @@ on:
       - developer
 
 jobs:
-  test:
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show project files
-        run: ls -la
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Check frontend
+      - name: Enable Yarn
         run: |
-          test -f frontend/package.json
-          echo "Frontend project found"
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
 
-      - name: Check backend
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install
+
+      - name: Build frontend
+        working-directory: frontend
+        run: yarn build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
         run: |
-          test -f backend/main.py
-          echo "Backend project found"
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Check Python backend
+        run: |
+          python -m py_compile backend/main.py
