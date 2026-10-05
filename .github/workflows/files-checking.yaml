@@ -87,4 +87,4 @@ jobs:
           "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
           "sudo mkdir -p /var/www/cicd-app && sudo chown -R \$USER:\$USER /var/www/cicd-app"
 
-          EOF
+          
