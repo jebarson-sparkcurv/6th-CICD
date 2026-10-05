@@ -1,0 +1,27 @@
+name: Developer CI
+
+on:
+  push:
+    branches:
+      - developer
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show project files
+        run: ls -la
+
+      - name: Check frontend
+        run: |
+          test -f frontend/package.json
+          echo "Frontend project found"
+
+      - name: Check backend
+        run: |
+          test -f backend/main.py
+          echo "Backend project found"
