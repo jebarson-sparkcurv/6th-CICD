@@ -169,35 +169,31 @@ jobs:
 
       - name: Create NGINX configuration
         run: |
+          printf '%s\n' \
+            'server {' \
+            '    listen 4000;' \
+            '    listen [::]:4000;' \
+            '' \
+            '    root /var/www/cicd-app/current;' \
+            '    index index.html;' \
+            '' \
+            '    location / {' \
+            '        try_files $uri $uri/ /index.html;' \
+            '    }' \
+            '' \
+            '    location /api/ {' \
+            '        proxy_pass http://127.0.0.1:8000/;' \
+            '' \
+            '        proxy_set_header Host $host;' \
+            '        proxy_set_header X-Real-IP $remote_addr;' \
+            '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
+            '        proxy_set_header X-Forwarded-Proto $scheme;' \
+            '    }' \
+            '}' \
+            > nginx-cicd-app.conf
 
-          cat > nginx-cicd-app.conf <<'NGINX'
-          server {
-            listen 4000;
-            listen [::]:4000;
-        
-            root /var/www/cicd-app/current;
-            index index.html;
-        
-            location / {
-                try_files $uri $uri/ /index.html;
-            }
-        
-            location /api/ {
-             proxy_pass http://127.0.0.1:8000/;
-        
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                }
-                }
-                NGINX
-        
-                  echo "NGINX configuration created"
-        
-                  cat nginx-cicd-app.conf
-
-
+          echo "NGINX configuration created:"
+          cat nginx-cicd-app.conf
       # ========================================================
       # CREATE SYSTEMD CONFIG ON RUNNER
       # ========================================================
