@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
 
 
       # --------------------------------------------------------
@@ -43,6 +43,7 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
+          yarn --version
 
 
       # --------------------------------------------------------
@@ -51,7 +52,8 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: yarn install
+        run: |
+          yarn install --frozen-lockfile
 
 
       # --------------------------------------------------------
@@ -60,7 +62,8 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
-        run: yarn build
+        run: |
+          yarn build
 
 
       # --------------------------------------------------------
@@ -149,9 +152,9 @@ jobs:
           path: backend
 
 
-      # --------------------------------------------------------
-      # Setup SSH
-      # --------------------------------------------------------
+      # ========================================================
+      # SETUP SSH
+      # ========================================================
 
       - name: Setup SSH
         run: |
@@ -173,14 +176,20 @@ jobs:
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
 
+            set -e
+
+            echo "Updating package list..."
+
             sudo apt-get update
 
-            sudo apt-get install -y nginx
+            echo "Installing required packages..."
 
-            sudo apt-get install -y python3
-            sudo apt-get install -y python3-pip
-            sudo apt-get install -y python3-venv
-            sudo apt-get install -y curl
+            sudo apt-get install -y \
+              nginx \
+              python3 \
+              python3-pip \
+              python3-venv \
+              curl
 
             echo "EC2 preparation completed"
 
@@ -194,15 +203,25 @@ jobs:
       - name: Create release directories
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "sudo mkdir -p /var/www/cicd-app/releases && \
-             sudo mkdir -p /opt/cicd-app-backend/releases && \
-             sudo chown -R \$USER:\$USER /var/www/cicd-app && \
-             sudo chown -R \$USER:\$USER /opt/cicd-app-backend"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+
+            set -e
+
+            sudo mkdir -p /var/www/cicd-app/releases
+
+            sudo mkdir -p /opt/cicd-app-backend/releases
+
+            sudo chown -R "$USER:$USER" /var/www/cicd-app
+
+            sudo chown -R "$USER:$USER" /opt/cicd-app-backend
+
+            echo "Release directories ready"
+
+          EOF
 
 
       # ========================================================
-      # CREATE CURRENT RELEASE DIRECTORY
+      # CREATE NEW RELEASE DIRECTORY
       # ========================================================
 
       - name: Create application release
@@ -210,17 +229,20 @@ jobs:
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
 
+            set -e
+
             mkdir -p /var/www/cicd-app/releases/${{ github.sha }}
 
             mkdir -p /opt/cicd-app-backend/releases/${{ github.sha }}
 
-            echo "Release created: ${{ github.sha }}"
+            echo "Release created:"
+            echo "${{ github.sha }}"
 
           EOF
 
 
       # ========================================================
-      # DEPLOY FRONTEND TO NEW RELEASE
+      # DEPLOY FRONTEND
       # ========================================================
 
       - name: Deploy frontend to release
@@ -231,7 +253,7 @@ jobs:
 
 
       # ========================================================
-      # DEPLOY BACKEND TO NEW RELEASE
+      # DEPLOY BACKEND
       # ========================================================
 
       - name: Deploy backend to release
@@ -249,6 +271,8 @@ jobs:
         run: |
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
+
+            set -e
 
             cd /opt/cicd-app-backend/releases/${{ github.sha }}
 
@@ -272,10 +296,15 @@ jobs:
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
 
+            set -e
+
+            echo "Creating NGINX configuration..."
+
             sudo tee /etc/nginx/sites-available/cicd-app > /dev/null << 'NGINX'
 
             server {
                 listen 4000;
+                listen [::]:4000;
 
                 root /var/www/cicd-app/current;
                 index index.html;
@@ -298,13 +327,33 @@ jobs:
 
             NGINX
 
-            sudo ln -sf \
+            echo "Removing old NGINX default site..."
+
+            sudo rm -f /etc/nginx/sites-enabled/default
+
+            echo "Creating NGINX symbolic link..."
+
+            sudo ln -sfn \
               /etc/nginx/sites-available/cicd-app \
               /etc/nginx/sites-enabled/cicd-app
 
+            echo "Checking NGINX symbolic link..."
+
+            sudo ls -l /etc/nginx/sites-enabled/cicd-app
+
+            echo "Testing NGINX configuration..."
+
             sudo nginx -t
 
+            echo "Reloading NGINX..."
+
+            sudo systemctl enable nginx
+
             sudo systemctl restart nginx
+
+            echo "Checking NGINX status..."
+
+            sudo systemctl --no-pager status nginx
 
             echo "NGINX configured successfully"
 
@@ -312,13 +361,15 @@ jobs:
 
 
       # ========================================================
-      # DEPLOY RELEASE
+      # ACTIVATE RELEASE
       # ========================================================
 
       - name: Activate release
         run: |
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
+
+            set -e
 
             RELEASE="${{ github.sha }}"
 
@@ -331,9 +382,9 @@ jobs:
             BACKEND_RELEASE="/opt/cicd-app-backend/releases/\$RELEASE"
 
 
-            # --------------------------------------------------
-            # Save previous release
-            # --------------------------------------------------
+            # ==================================================
+            # SAVE PREVIOUS RELEASE
+            # ==================================================
 
             PREVIOUS_FRONTEND=""
 
@@ -348,30 +399,44 @@ jobs:
             fi
 
 
-            echo "Previous frontend release:"
+            echo "======================================"
+
+            echo "Previous frontend:"
             echo "\$PREVIOUS_FRONTEND"
 
-            echo "Previous backend release:"
+            echo "Previous backend:"
             echo "\$PREVIOUS_BACKEND"
 
-
-            # --------------------------------------------------
-            # Activate new frontend
-            # --------------------------------------------------
-
-            ln -sfn "\$FRONTEND_RELEASE" "\$FRONTEND_CURRENT"
+            echo "======================================"
 
 
-            # --------------------------------------------------
-            # Activate new backend
-            # --------------------------------------------------
+            # ==================================================
+            # ACTIVATE NEW FRONTEND
+            # ==================================================
 
-            ln -sfn "\$BACKEND_RELEASE" "\$BACKEND_CURRENT"
+            echo "Activating frontend..."
+
+            ln -sfn \
+              "\$FRONTEND_RELEASE" \
+              "\$FRONTEND_CURRENT"
 
 
-            # --------------------------------------------------
-            # Configure systemd
-            # --------------------------------------------------
+            # ==================================================
+            # ACTIVATE NEW BACKEND
+            # ==================================================
+
+            echo "Activating backend..."
+
+            ln -sfn \
+              "\$BACKEND_RELEASE" \
+              "\$BACKEND_CURRENT"
+
+
+            # ==================================================
+            # CREATE SYSTEMD SERVICE
+            # ==================================================
+
+            echo "Creating backend systemd service..."
 
             sudo tee /etc/systemd/system/cicd-backend.service > /dev/null << 'SERVICE'
 
@@ -392,9 +457,9 @@ jobs:
             SERVICE
 
 
-            # --------------------------------------------------
-            # Reload systemd
-            # --------------------------------------------------
+            # ==================================================
+            # RELOAD SYSTEMD
+            # ==================================================
 
             sudo systemctl daemon-reload
 
@@ -403,27 +468,31 @@ jobs:
             sudo systemctl restart cicd-backend
 
 
-            # --------------------------------------------------
-            # Wait for backend
-            # --------------------------------------------------
+            # ==================================================
+            # WAIT FOR BACKEND
+            # ==================================================
 
             echo "Waiting for backend..."
 
             sleep 5
 
 
-            # --------------------------------------------------
-            # Backend health check
-            # --------------------------------------------------
+            # ==================================================
+            # BACKEND HEALTH CHECK
+            # ==================================================
+
+            echo "Checking backend..."
 
             if ! curl -f http://127.0.0.1:8000/health; then
 
-              echo "Backend health check failed"
+              echo "Backend health check FAILED"
 
               echo "Starting rollback..."
 
 
+              # ----------------------------------------------
               # Rollback frontend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_FRONTEND" ]; then
                 ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
@@ -432,7 +501,9 @@ jobs:
               fi
 
 
+              # ----------------------------------------------
               # Rollback backend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_BACKEND" ]; then
                 ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
@@ -450,21 +521,25 @@ jobs:
             fi
 
 
-            echo "Backend health check passed"
+            echo "Backend health check PASSED"
 
 
-            # --------------------------------------------------
-            # NGINX/API health check
-            # --------------------------------------------------
+            # ==================================================
+            # NGINX / API HEALTH CHECK
+            # ==================================================
+
+            echo "Checking NGINX/API..."
 
             if ! curl -f http://127.0.0.1:4000/api/health; then
 
-              echo "NGINX/API health check failed"
+              echo "NGINX/API health check FAILED"
 
               echo "Starting rollback..."
 
 
+              # ----------------------------------------------
               # Rollback frontend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_FRONTEND" ]; then
                 ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
@@ -473,7 +548,9 @@ jobs:
               fi
 
 
+              # ----------------------------------------------
               # Rollback backend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_BACKEND" ]; then
                 ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
@@ -491,21 +568,25 @@ jobs:
             fi
 
 
-            echo "NGINX/API health check passed"
+            echo "NGINX/API health check PASSED"
 
 
-            # --------------------------------------------------
-            # Frontend health check
-            # --------------------------------------------------
+            # ==================================================
+            # FRONTEND HEALTH CHECK
+            # ==================================================
+
+            echo "Checking frontend..."
 
             if ! curl -f http://127.0.0.1:4000; then
 
-              echo "Frontend health check failed"
+              echo "Frontend health check FAILED"
 
               echo "Starting rollback..."
 
 
+              # ----------------------------------------------
               # Rollback frontend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_FRONTEND" ]; then
                 ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
@@ -514,7 +595,9 @@ jobs:
               fi
 
 
+              # ----------------------------------------------
               # Rollback backend
+              # ----------------------------------------------
 
               if [ -n "\$PREVIOUS_BACKEND" ]; then
                 ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
@@ -532,15 +615,67 @@ jobs:
             fi
 
 
-            echo "Frontend health check passed"
+            echo "Frontend health check PASSED"
+
+
+            # ==================================================
+            # DEPLOYMENT SUCCESS
+            # ==================================================
 
             echo "======================================"
 
-            echo "Deployment successful"
+            echo "DEPLOYMENT SUCCESSFUL"
 
-            echo "Release: \$RELEASE"
+            echo "Release:"
+            echo "\$RELEASE"
 
             echo "======================================"
+
+          EOF
+
+
+      # ========================================================
+      # VERIFY DEPLOYMENT
+      # ========================================================
+
+      - name: Verify deployment
+        run: |
+          ssh -i ~/.ssh/github-actions \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+
+            echo "======================================"
+
+            echo "NGINX enabled site:"
+
+            sudo ls -l /etc/nginx/sites-enabled/
+
+            echo "======================================"
+
+            echo "Frontend current release:"
+
+            readlink -f /var/www/cicd-app/current || true
+
+            echo "======================================"
+
+            echo "Backend current release:"
+
+            readlink -f /opt/cicd-app-backend/current || true
+
+            echo "======================================"
+
+            echo "Listening ports:"
+
+            sudo ss -tulpn | grep -E ':4000|:8000' || true
+
+            echo "======================================"
+
+            echo "Backend service:"
+
+            sudo systemctl --no-pager status cicd-backend || true
+
+            echo "======================================"
+
+            echo "Deployment verification completed"
 
           EOF
 
@@ -554,13 +689,19 @@ jobs:
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
 
+            echo "Cleaning old frontend releases..."
+
             cd /var/www/cicd-app/releases
 
             ls -dt */ 2>/dev/null | tail -n +4 | xargs -r rm -rf
 
+
+            echo "Cleaning old backend releases..."
+
             cd /opt/cicd-app-backend/releases
 
             ls -dt */ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
 
             echo "Old releases cleaned"
 
