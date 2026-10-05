@@ -64,7 +64,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Save frontend build
+      # Upload frontend build
       # --------------------------------------------------------
 
       - name: Upload frontend build
@@ -95,7 +95,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Check Python syntax
+      # Check Python backend syntax
       # --------------------------------------------------------
 
       - name: Check Python backend
@@ -104,7 +104,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Save backend files
+      # Upload backend files
       # --------------------------------------------------------
 
       - name: Upload backend
@@ -164,9 +164,9 @@ jobs:
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
 
-      # --------------------------------------------------------
-      # Prepare EC2 server
-      # --------------------------------------------------------
+      # ========================================================
+      # PREPARE EC2
+      # ========================================================
 
       - name: Prepare EC2 server
         run: |
@@ -187,49 +187,70 @@ jobs:
           EOF
 
 
-      # --------------------------------------------------------
-      # Create frontend directory
-      # --------------------------------------------------------
+      # ========================================================
+      # CREATE RELEASE DIRECTORIES
+      # ========================================================
 
-      - name: Create frontend directory
+      - name: Create release directories
         run: |
           ssh -i ~/.ssh/github-actions \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "sudo mkdir -p /var/www/cicd-app && sudo chown -R \$USER:\$USER /var/www/cicd-app"
+            "sudo mkdir -p /var/www/cicd-app/releases && \
+             sudo mkdir -p /opt/cicd-app-backend/releases && \
+             sudo chown -R \$USER:\$USER /var/www/cicd-app && \
+             sudo chown -R \$USER:\$USER /opt/cicd-app-backend"
 
 
-      # --------------------------------------------------------
-      # Create backend directory
-      # --------------------------------------------------------
+      # ========================================================
+      # CREATE CURRENT RELEASE DIRECTORY
+      # ========================================================
 
-      - name: Create backend directory
+      - name: Create application release
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "sudo mkdir -p /opt/cicd-app-backend && sudo chown -R \$USER:\$USER /opt/cicd-app-backend"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
+
+            mkdir -p /var/www/cicd-app/releases/${{ github.sha }}
+
+            mkdir -p /opt/cicd-app-backend/releases/${{ github.sha }}
+
+            echo "Release created: ${{ github.sha }}"
+
+          EOF
 
 
-      # --------------------------------------------------------
-      # Deploy backend files
-      # --------------------------------------------------------
+      # ========================================================
+      # DEPLOY FRONTEND TO NEW RELEASE
+      # ========================================================
 
-      - name: Deploy backend to EC2
+      - name: Deploy frontend to release
+        run: |
+          scp -i ~/.ssh/github-actions -r \
+            frontend/dist/* \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/cicd-app/releases/${{ github.sha }}/"
+
+
+      # ========================================================
+      # DEPLOY BACKEND TO NEW RELEASE
+      # ========================================================
+
+      - name: Deploy backend to release
         run: |
           scp -i ~/.ssh/github-actions -r \
             backend/* \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/opt/cicd-app-backend/"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/opt/cicd-app-backend/releases/${{ github.sha }}/"
 
 
-      # --------------------------------------------------------
-      # Setup Python virtual environment
-      # --------------------------------------------------------
+      # ========================================================
+      # CREATE PYTHON VIRTUAL ENVIRONMENT
+      # ========================================================
 
       - name: Setup backend environment
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
 
-            cd /opt/cicd-app-backend
+            cd /opt/cicd-app-backend/releases/${{ github.sha }}
 
             python3 -m venv venv
 
@@ -242,20 +263,9 @@ jobs:
           EOF
 
 
-      # --------------------------------------------------------
-      # Deploy frontend files
-      # --------------------------------------------------------
-
-      - name: Deploy frontend to EC2
-        run: |
-          scp -i ~/.ssh/github-actions -r \
-            frontend/dist/* \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/cicd-app/"
-
-
-      # --------------------------------------------------------
-      # Configure NGINX
-      # --------------------------------------------------------
+      # ========================================================
+      # CONFIGURE NGINX
+      # ========================================================
 
       - name: Configure NGINX
         run: |
@@ -267,11 +277,22 @@ jobs:
             server {
                 listen 4000;
 
-                root /var/www/cicd-app;
+                root /var/www/cicd-app/current;
                 index index.html;
 
+                # React frontend
                 location / {
                     try_files $uri $uri/ /index.html;
+                }
+
+                # FastAPI backend
+                location /api/ {
+                    proxy_pass http://127.0.0.1:8000/;
+
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
                 }
             }
 
@@ -290,12 +311,269 @@ jobs:
           EOF
 
 
-      # --------------------------------------------------------
-      # Check frontend health
-      # --------------------------------------------------------
+      # ========================================================
+      # DEPLOY RELEASE
+      # ========================================================
 
-      - name: Check frontend health
+      - name: Activate release
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "curl -f http://localhost:4000"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
+
+            RELEASE="${{ github.sha }}"
+
+            FRONTEND_CURRENT="/var/www/cicd-app/current"
+
+            BACKEND_CURRENT="/opt/cicd-app-backend/current"
+
+            FRONTEND_RELEASE="/var/www/cicd-app/releases/\$RELEASE"
+
+            BACKEND_RELEASE="/opt/cicd-app-backend/releases/\$RELEASE"
+
+
+            # --------------------------------------------------
+            # Save previous release
+            # --------------------------------------------------
+
+            PREVIOUS_FRONTEND=""
+
+            PREVIOUS_BACKEND=""
+
+            if [ -L "\$FRONTEND_CURRENT" ]; then
+              PREVIOUS_FRONTEND=\$(readlink -f "\$FRONTEND_CURRENT")
+            fi
+
+            if [ -L "\$BACKEND_CURRENT" ]; then
+              PREVIOUS_BACKEND=\$(readlink -f "\$BACKEND_CURRENT")
+            fi
+
+
+            echo "Previous frontend release:"
+            echo "\$PREVIOUS_FRONTEND"
+
+            echo "Previous backend release:"
+            echo "\$PREVIOUS_BACKEND"
+
+
+            # --------------------------------------------------
+            # Activate new frontend
+            # --------------------------------------------------
+
+            ln -sfn "\$FRONTEND_RELEASE" "\$FRONTEND_CURRENT"
+
+
+            # --------------------------------------------------
+            # Activate new backend
+            # --------------------------------------------------
+
+            ln -sfn "\$BACKEND_RELEASE" "\$BACKEND_CURRENT"
+
+
+            # --------------------------------------------------
+            # Configure systemd
+            # --------------------------------------------------
+
+            sudo tee /etc/systemd/system/cicd-backend.service > /dev/null << 'SERVICE'
+
+            [Unit]
+            Description=CI/CD FastAPI Backend
+            After=network.target
+
+            [Service]
+            User=ubuntu
+            WorkingDirectory=/opt/cicd-app-backend/current
+            ExecStart=/opt/cicd-app-backend/current/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+
+            SERVICE
+
+
+            # --------------------------------------------------
+            # Reload systemd
+            # --------------------------------------------------
+
+            sudo systemctl daemon-reload
+
+            sudo systemctl enable cicd-backend
+
+            sudo systemctl restart cicd-backend
+
+
+            # --------------------------------------------------
+            # Wait for backend
+            # --------------------------------------------------
+
+            echo "Waiting for backend..."
+
+            sleep 5
+
+
+            # --------------------------------------------------
+            # Backend health check
+            # --------------------------------------------------
+
+            if ! curl -f http://127.0.0.1:8000/health; then
+
+              echo "Backend health check failed"
+
+              echo "Starting rollback..."
+
+
+              # Rollback frontend
+
+              if [ -n "\$PREVIOUS_FRONTEND" ]; then
+                ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
+              else
+                rm -f "\$FRONTEND_CURRENT"
+              fi
+
+
+              # Rollback backend
+
+              if [ -n "\$PREVIOUS_BACKEND" ]; then
+                ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
+              else
+                rm -f "\$BACKEND_CURRENT"
+              fi
+
+
+              sudo systemctl restart cicd-backend
+
+              echo "Rollback completed"
+
+              exit 1
+
+            fi
+
+
+            echo "Backend health check passed"
+
+
+            # --------------------------------------------------
+            # NGINX/API health check
+            # --------------------------------------------------
+
+            if ! curl -f http://127.0.0.1:4000/api/health; then
+
+              echo "NGINX/API health check failed"
+
+              echo "Starting rollback..."
+
+
+              # Rollback frontend
+
+              if [ -n "\$PREVIOUS_FRONTEND" ]; then
+                ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
+              else
+                rm -f "\$FRONTEND_CURRENT"
+              fi
+
+
+              # Rollback backend
+
+              if [ -n "\$PREVIOUS_BACKEND" ]; then
+                ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
+              else
+                rm -f "\$BACKEND_CURRENT"
+              fi
+
+
+              sudo systemctl restart cicd-backend
+
+              echo "Rollback completed"
+
+              exit 1
+
+            fi
+
+
+            echo "NGINX/API health check passed"
+
+
+            # --------------------------------------------------
+            # Frontend health check
+            # --------------------------------------------------
+
+            if ! curl -f http://127.0.0.1:4000; then
+
+              echo "Frontend health check failed"
+
+              echo "Starting rollback..."
+
+
+              # Rollback frontend
+
+              if [ -n "\$PREVIOUS_FRONTEND" ]; then
+                ln -sfn "\$PREVIOUS_FRONTEND" "\$FRONTEND_CURRENT"
+              else
+                rm -f "\$FRONTEND_CURRENT"
+              fi
+
+
+              # Rollback backend
+
+              if [ -n "\$PREVIOUS_BACKEND" ]; then
+                ln -sfn "\$PREVIOUS_BACKEND" "\$BACKEND_CURRENT"
+              else
+                rm -f "\$BACKEND_CURRENT"
+              fi
+
+
+              sudo systemctl restart cicd-backend
+
+              echo "Rollback completed"
+
+              exit 1
+
+            fi
+
+
+            echo "Frontend health check passed"
+
+            echo "======================================"
+
+            echo "Deployment successful"
+
+            echo "Release: \$RELEASE"
+
+            echo "======================================"
+
+          EOF
+
+
+      # ========================================================
+      # CLEAN OLD RELEASES
+      # ========================================================
+
+      - name: Cleanup old releases
+        run: |
+          ssh -i ~/.ssh/github-actions \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
+
+            cd /var/www/cicd-app/releases
+
+            ls -dt */ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
+            cd /opt/cicd-app-backend/releases
+
+            ls -dt */ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
+            echo "Old releases cleaned"
+
+          EOF
+
+
+      # ========================================================
+      # DEPLOYMENT SUMMARY
+      # ========================================================
+
+      - name: Deployment completed
+        run: |
+          echo "======================================"
+          echo "Deployment completed successfully"
+          echo "Release: ${{ github.sha }}"
+          echo "======================================"
