@@ -60,6 +60,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
@@ -91,10 +92,18 @@ jobs:
             sudo apt-get install -y curl
 
             echo "EC2 preparation completed"
+
+          EOF
+
       - name: Create frontend directory
         run: |
           ssh -i ~/.ssh/github-actions \
-          "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-          "sudo mkdir -p /var/www/cicd-app && sudo chown -R \$USER:\$USER /var/www/cicd-app"
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "sudo mkdir -p /var/www/cicd-app && sudo chown -R \$USER:\$USER /var/www/cicd-app"
 
+      - name: Deploy frontend to EC2
+        run: |
+          scp -i ~/.ssh/github-actions -r \
+            frontend/dist/* \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/cicd-app/"
           
