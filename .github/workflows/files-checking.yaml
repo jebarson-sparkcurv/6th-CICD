@@ -131,6 +131,11 @@ jobs:
             sudo systemctl restart nginx
 
             echo "NGINX configured successfully"
+      - name: Check frontend health
+        run: |
+          ssh -i ~/.ssh/github-actions \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "curl -f http://localhost:4000"
 
           EOF
           
