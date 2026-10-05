@@ -6,6 +6,7 @@ on:
       - developer
 
 jobs:
+
   build:
     name: Build Application
     runs-on: ubuntu-latest
@@ -46,12 +47,15 @@ jobs:
       - name: Check Python backend
         run: |
           python -m py_compile backend/main.py
-        deploy:
-      - name: Connect to EC2
-       needs: build
-       runs-on: ubuntu-latest
+
+
+  deploy:
+    name: Connect to EC2
+    needs: build
+    runs-on: ubuntu-latest
 
     steps:
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
