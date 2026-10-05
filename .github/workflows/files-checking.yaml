@@ -286,7 +286,6 @@ jobs:
 
           EOF
 
-
       # ========================================================
       # CONFIGURE NGINX
       # ========================================================
@@ -294,72 +293,37 @@ jobs:
       - name: Configure NGINX
         run: |
           ssh -i ~/.ssh/github-actions \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
-
-            set -e
-
-            echo "Creating NGINX configuration..."
-
-            sudo tee /etc/nginx/sites-available/cicd-app > /dev/null << 'NGINX'
-
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "sudo rm -f /etc/nginx/sites-enabled/default && \
+             sudo tee /etc/nginx/sites-available/cicd-app > /dev/null <<'NGINX'
             server {
-                listen 4000;
-                listen [::]:4000;
+            listen 4000;
+            listen [::]:4000;
 
-                root /var/www/cicd-app/current;
-                index index.html;
+            root /var/www/cicd-app/current;
+            index index.html;
 
-                # React frontend
-                location / {
-                    try_files $uri $uri/ /index.html;
-                }
-
-                # FastAPI backend
-                location /api/ {
-                    proxy_pass http://127.0.0.1:8000/;
-
-                    proxy_set_header Host $host;
-                    proxy_set_header X-Real-IP $remote_addr;
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                    proxy_set_header X-Forwarded-Proto $scheme;
-                }
+            location / {
+                try_files \$uri \$uri/ /index.html;
             }
 
-            NGINX
+            location /api/ {
+                proxy_pass http://127.0.0.1:8000/;
 
-            echo "Removing old NGINX default site..."
-
-            sudo rm -f /etc/nginx/sites-enabled/default
-
-            echo "Creating NGINX symbolic link..."
-
-            sudo ln -sfn \
-              /etc/nginx/sites-available/cicd-app \
-              /etc/nginx/sites-enabled/cicd-app
-
-            echo "Checking NGINX symbolic link..."
-
-            sudo ls -l /etc/nginx/sites-enabled/cicd-app
-
-            echo "Testing NGINX configuration..."
-
-            sudo nginx -t
-
-            echo "Reloading NGINX..."
-
-            sudo systemctl enable nginx
-
-            sudo systemctl restart nginx
-
-            echo "Checking NGINX status..."
-
-            sudo systemctl --no-pager status nginx
-
-            echo "NGINX configured successfully"
-
-          EOF
-
-
+                proxy_set_header Host \$host;
+                proxy_set_header X-Real-IP \$remote_addr;
+                proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$scheme;
+                }
+                }
+                NGINX
+                            sudo ln -sfn /etc/nginx/sites-available/cicd-app /etc/nginx/sites-enabled/cicd-app && \
+                            echo 'Checking NGINX configuration...' && \
+                            sudo nginx -t && \
+                            echo 'Checking symbolic link...' && \
+                            sudo ls -l /etc/nginx/sites-enabled/cicd-app && \
+                            sudo systemctl enable nginx && \
+                            sudo systemctl restart nginx"
       # ========================================================
       # ACTIVATE RELEASE
       # ========================================================
